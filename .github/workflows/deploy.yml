@@ -1,0 +1,123 @@
+name: Deploy to Racco K3s
+
+on:
+  push:
+    branches:
+      - main
+  workflow_dispatch:
+
+jobs:
+  deploy-dev:
+    name: Deploy DEV
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Setup SSH
+        run: |
+          mkdir -p ~/.ssh
+          echo "${{ secrets.SSH_PRIVATE_KEY }}" > ~/.ssh/id_rsa
+          chmod 600 ~/.ssh/id_rsa
+          ssh-keyscan -H ${{ secrets.RACCO_SERVER_IP }} >> ~/.ssh/known_hosts
+
+      - name: Authenticate GitHub CLI
+        run: |
+          echo "${{ secrets.GH_TOKEN }}" | gh auth login --with-token
+
+      - name: Deploy to DEV
+        run: |
+          ssh -i ~/.ssh/id_rsa root@${{ secrets.RACCO_SERVER_IP }} << 'EOF'
+            set -e
+            export KUBECONFIG=/etc/rancher/k3s/k3s.yaml
+            
+            cd /root/k8s-deploy-racco || (gh repo clone softhill/k8s-deploy-racco /root/k8s-deploy-racco && cd /root/k8s-deploy-racco)
+            
+            gh repo sync softhill/k8s-deploy-racco --branch main --force
+            
+            helm upgrade --install racco-dev ./charts/odoo-multi \
+              --namespace racco-dev \
+              --create-namespace \
+              -f clients/racco/values-dev.yaml \
+              --wait --timeout 10m
+            
+            kubectl rollout restart deployment/racco-dev-odoo-multi -n racco-dev
+            kubectl rollout status deployment/racco-dev-odoo-multi -n racco-dev --timeout=5m
+          EOF
+
+  deploy-hml:
+    name: Deploy HML
+    runs-on: ubuntu-latest
+    needs: deploy-dev
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Setup SSH
+        run: |
+          mkdir -p ~/.ssh
+          echo "${{ secrets.SSH_PRIVATE_KEY }}" > ~/.ssh/id_rsa
+          chmod 600 ~/.ssh/id_rsa
+          ssh-keyscan -H ${{ secrets.RACCO_SERVER_IP }} >> ~/.ssh/known_hosts
+
+      - name: Authenticate GitHub CLI
+        run: |
+          echo "${{ secrets.GH_TOKEN }}" | gh auth login --with-token
+
+      - name: Deploy to HML
+        run: |
+          ssh -i ~/.ssh/id_rsa root@${{ secrets.RACCO_SERVER_IP }} << 'EOF'
+            set -e
+            export KUBECONFIG=/etc/rancher/k3s/k3s.yaml
+            
+            cd /root/k8s-deploy-racco
+            gh repo sync softhill/k8s-deploy-racco --branch main --force
+            
+            helm upgrade --install racco-hml ./charts/odoo-multi \
+              --namespace racco-hml \
+              --create-namespace \
+              -f clients/racco/values-hml.yaml \
+              --wait --timeout 10m
+            
+            kubectl rollout restart deployment/racco-hml-odoo-multi -n racco-hml
+            kubectl rollout status deployment/racco-hml-odoo-multi -n racco-hml --timeout=5m
+          EOF
+
+  deploy-prod:
+    name: Deploy PROD
+    runs-on: ubuntu-latest
+    needs: deploy-hml
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Setup SSH
+        run: |
+          mkdir -p ~/.ssh
+          echo "${{ secrets.SSH_PRIVATE_KEY }}" > ~/.ssh/id_rsa
+          chmod 600 ~/.ssh/id_rsa
+          ssh-keyscan -H ${{ secrets.RACCO_SERVER_IP }} >> ~/.ssh/known_hosts
+
+      - name: Authenticate GitHub CLI
+        run: |
+          echo "${{ secrets.GH_TOKEN }}" | gh auth login --with-token
+
+      - name: Deploy to PROD
+        run: |
+          ssh -i ~/.ssh/id_rsa root@${{ secrets.RACCO_SERVER_IP }} << 'EOF'
+            set -e
+            export KUBECONFIG=/etc/rancher/k3s/k3s.yaml
+            
+            cd /root/k8s-deploy-racco
+            gh repo sync softhill/k8s-deploy-racco --branch main --force
+            
+            helm upgrade --install racco-prod ./charts/odoo-multi \
+              --namespace racco-prod \
+              --create-namespace \
+              -f clients/racco/values-prod.yaml \
+              --wait --timeout 10m
+            
+            kubectl rollout restart deployment/racco-prod-odoo-multi -n racco-prod
+            kubectl rollout status deployment/racco-prod-odoo-multi -n racco-prod --timeout=5m
+          EOF
+

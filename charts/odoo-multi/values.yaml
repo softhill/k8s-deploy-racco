@@ -1,0 +1,86 @@
+global:
+  image:
+    repository: ghcr.io/softhill/odoo18-multimodas
+    tag: "prod-latest"
+    pullPolicy: IfNotPresent
+
+replicaCount: 2
+
+service:
+  type: ClusterIP
+  port: 8069
+  longpollingPort: 8072
+
+ingress:
+  enabled: true
+  className: "nginx"
+  tls:
+    enabled: true
+    clusterIssuer: "letsencrypt-prod"
+  hosts: []  # override nos values do cliente/ambiente
+
+odoo:
+  workers: 2
+  longpolling_workers: 1
+  log_level: "info"
+  proxy_mode: "true"
+
+db:
+  host: ""   # override por env
+  port: 25060
+  name: ""
+  user: ""
+  passwordSecretRef: "odoo-db"     # Secret com DB_PASSWORD
+
+redis:
+  host: ""   # override por env
+  port: 25061
+  db: 0
+  passwordSecretRef: "odoo-redis"  # Secret com REDIS_PASSWORD
+
+# Recursos e Limites (CPU/Memory)
+resources:
+  limits:
+    cpu: 2
+    memory: 4Gi
+  requests:
+    cpu: 1
+    memory: 2Gi
+
+# Pod Disruption Budget
+pdb:
+  minAvailable: 1  # Mantém pelo menos 1 pod
+
+# Network Policy
+networkPolicy:
+  enabled: true  # Habilitar para isolar o namespace
+
+# Horizontal Pod Autoscaler
+hpa:
+  enabled: false  # Habilitar para auto-scaling
+  minReplicas: 2
+  maxReplicas: 10
+  # metrics:  # Personalizar métricas se necessário
+
+# Armazenamento S3 (DigitalOcean Spaces)
+s3:
+  enabled: true                    # Usar S3 ao invés de filestore local
+  endpoint: ""                     # URL do endpoint S3 (ex: nyc3.digitaloceanobjects.com)
+  region: ""                       # Região (ex: nyc3)
+  bucket: ""                       # Nome do bucket (ex: softhill-odoo)
+  accessKeySecretRef: "spaces-credentials"  # Secret com AWS_ACCESS_KEY_ID
+  secretKeySecretRef: "spaces-credentials"  # Secret com AWS_SECRET_ACCESS_KEY
+  # Formato do bucket: <client>-<env> (ex: multimodas-dev, multimodas-hml)
+
+# Persistência para Filestore (PVC local)
+persistence:
+  enabled: true    # Habilitar PVC local ao invés de S3
+  size: 20Gi       # Tamanho inicial por ambiente (ajustar conforme necessário)
+  storageClass: "local-path"  # Storage class do k3s
+
+# Valkey/Redis Self-Hosted (Opcional - economiza $15/mês)
+valkey:
+  enabled: false  # Habilitar para rodar no cluster ao invés de managed
+  port: 6379
+  password: ""  # Configurar senha via Secret
+  storage: "10Gi"  # Volume para persistência

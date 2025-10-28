@@ -1,0 +1,180 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  # Usa o template corrigido para gerar um nome de recurso consistente.
+  # Exemplo de nome gerado: multimodas-dev-odoo-multi
+  name: {{ include "odoo.fullname" . }}
+  labels:
+    {{- include "odoo.labels" . | nindent 4 }}
+spec:
+  # Garante que seja um inteiro, se for um template. O padrão 'default 1' já é bom.
+  replicas: {{ .Values.replicaCount | default 1 }}
+  selector:
+    # Usa o template de labels para garantir consistência no selector.
+    matchLabels:
+      {{- include "odoo.selectorLabels" . | nindent 6 }}
+  template:
+    metadata:
+      labels:
+        {{- include "odoo.labels" . | nindent 8 }}
+    spec:
+      # Corrigida a indentação e a sintaxe YAML para listas.
+      imagePullSecrets:
+        - name: ghcr-cred
+      containers:
+        - name: odoo
+          image: "{{ .Values.global.image.repository }}:{{ .Values.global.image.tag }}"
+          imagePullPolicy: {{ .Values.global.image.pullPolicy | quote }}
+          ports:
+            - name: http
+              containerPort: {{ .Values.service.port }}
+            - name: longpolling
+              containerPort: {{ .Values.service.longpollingPort }}
+          env:
+            # Variáveis do PostgreSQL (DigitalOcean Managed)
+            # Odoo usa PG* por padrão.
+            - name: PGHOST
+              value: "{{ .Values.db.host }}"
+            # PGPORT deve ser uma string, pois .Values.db.port é um número.
+            - name: PGPORT
+              value: {{ .Values.db.port | quote }}
+            - name: PGDATABASE
+              value: "{{ .Values.db.name }}"
+            - name: PGUSER
+              value: "{{ .Values.db.user }}"
+            # Assegura a leitura do Secret para a senha.
+            - name: PGPASSWORD
+              valueFrom:
+                secretKeyRef:
+                  name: {{ .Values.db.passwordSecretRef }}
+                  key: DB_PASSWORD
+            # O DOKS (e outros DBs gerenciados) usa SSL por padrão/obrigatório.
+            - name: PGSSLMODE
+              value: "disable"
+            # É comum ter que desativar a verificação de root certs em ambientes não-públicos
+            # ou usar um Volume Mount para o cert (melhor prática). Vamos manter "none" por enquanto.
+            - name: PGSSLROOTCERT
+              value: "none"
+            
+            # Para PostgreSQL gerenciado na DigitalOcean (sem database 'postgres')
+            # Configura o database padrão para operações do Odoo
+            - name: PGDATABASE_DEFAULT
+              value: "defaultdb"
+            # Força o Odoo a usar um template diferente ao criar databases
+            - name: DB_TEMPLATE
+              value: "template0"
+            
+            # Configurações de acesso ao database
+            # LIST_DB=false: não mostra lista de databases
+            # DB_FILTER: filtra quais databases são acessíveis (corresponde ao nome do database)
+            - name: LIST_DB
+              value: "false"
+            - name: DB_FILTER
+              value: "{{ .Values.db.name }}"
+            
+            # Variáveis do Redis/Valkey
+            - name: REDIS_HOST
+              value: "{{ .Values.redis.host }}"
+            - name: REDIS_PORT
+              value: {{ .Values.redis.port | quote }}
+            - name: REDIS_DB
+              value: {{ .Values.redis.db | quote }}
+            - name: REDIS_PASSWORD
+              valueFrom:
+                secretKeyRef:
+                  name: {{ .Values.redis.passwordSecretRef }}
+                  key: REDIS_PASSWORD
+            
+            {{- if .Values.s3.enabled }}
+            # Configurações S3 (DigitalOcean Spaces)
+            # Variáveis que o Odoo espera para S3
+            - name: AWS_ACCESS_KEY_ID
+              valueFrom:
+                secretKeyRef:
+                  name: {{ .Values.s3.accessKeySecretRef }}
+                  key: AWS_ACCESS_KEY_ID
+            - name: AWS_SECRET_ACCESS_KEY
+              valueFrom:
+                secretKeyRef:
+                  name: {{ .Values.s3.secretKeySecretRef }}
+                  key: AWS_SECRET_ACCESS_KEY
+            - name: AWS_REGION
+              value: "{{ .Values.s3.region }}"
+            - name: AWS_S3_ENDPOINT_URL
+              value: "https://{{ .Values.s3.endpoint }}"
+            - name: S3_ENDPOINT
+              value: "{{ .Values.s3.endpoint }}"
+            - name: S3_REGION
+              value: "{{ .Values.s3.region }}"
+            - name: S3_BUCKET
+              value: "{{ .Values.s3.bucket }}"
+            - name: S3_ACCESS_KEY
+              valueFrom:
+                secretKeyRef:
+                  name: {{ .Values.s3.accessKeySecretRef }}
+                  key: AWS_ACCESS_KEY_ID
+            - name: S3_SECRET_KEY
+              valueFrom:
+                secretKeyRef:
+                  name: {{ .Values.s3.secretKeySecretRef }}
+                  key: AWS_SECRET_ACCESS_KEY
+            # Configurar Odoo para usar S3 ao invés de filestore local
+            # NOTA: Após adicionar, é necessário migrar arquivos do banco para S3
+            - name: IR_ATTACHMENT_STORAGE
+              value: "s3"
+            {{- end }}
+                  
+            # Configurações do Odoo (otimização de workers)
+            - name: ODOO_WORKERS
+              value: {{ .Values.odoo.workers | quote }}
+            - name: ODOO_LONGPOLLING_WORKERS
+              value: {{ .Values.odoo.longpolling_workers | quote }}
+            # Upper case é bom para garantir consistência, como você já fez.
+            - name: LOG_LEVEL
+              value: "{{ .Values.odoo.log_level | upper }}"
+            - name: ODOO_PROXY_MODE
+              value: {{ .Values.odoo.proxy_mode | quote }}
+          
+          # Volume Mounts para PVC
+          {{- if .Values.persistence.enabled }}
+          volumeMounts:
+            - name: filestore
+              mountPath: /var/lib/odoo/filestore
+          {{- end }}
+          
+          # Recursos e Limites
+          resources:
+            {{- toYaml .Values.resources | nindent 12 }}
+          
+          # Configuração de Security Context
+          securityContext:
+            runAsNonRoot: true
+            runAsUser: 1000
+            readOnlyRootFilesystem: false
+          
+          # Probes para Doodba/Odoo
+          # O /web/health é o endpoint padrão da imagem Doodba para healthcheck.
+          readinessProbe:
+            httpGet:
+              path: /web/health
+              port: http
+            initialDelaySeconds: 30
+            periodSeconds: 10
+            timeoutSeconds: 5
+            successThreshold: 1
+            failureThreshold: 3
+          livenessProbe:
+            httpGet:
+              path: /web/health
+              port: http
+            initialDelaySeconds: 60
+            periodSeconds: 30
+            timeoutSeconds: 10
+            successThreshold: 1
+            failureThreshold: 3
+      {{- if .Values.persistence.enabled }}
+      volumes:
+        - name: filestore
+          persistentVolumeClaim:
+            claimName: {{ include "odoo.fullname" . }}-filestore
+      {{- end }}

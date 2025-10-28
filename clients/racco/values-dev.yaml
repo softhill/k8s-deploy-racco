@@ -1,0 +1,96 @@
+nameOverride: "racco-dev"
+fullnameOverride: "racco-dev"
+
+image:
+  repository: ghcr.io/softhill/odoo18-racco
+  tag: "dev-latest"
+  pullPolicy: Always
+
+imagePullSecrets:
+  - name: ghcr-cred
+
+replicaCount: 1
+
+odoo:
+  workers: 2
+  dbFilter: "^racco_dev$"
+  adminPassword: "admin_racco_dev_2025"
+  listDb: true
+
+db:
+  host: "postgresql.postgresql.svc.cluster.local"
+  port: 5432
+  name: "racco_dev"
+  user: "odoo"
+  existingSecret: "odoo-db"
+  secretKey: "DB_PASSWORD"
+
+redis:
+  enabled: true
+  host: "racco-dev-valkey"
+  port: 6379
+  dbIndex: 1
+  existingSecret: "odoo-redis"
+  secretKey: "REDIS_PASSWORD"
+
+valkey:
+  enabled: true
+  replicas: 1
+  storage: "5Gi"
+  storageClass: "local-path"
+
+ingress:
+  enabled: true
+  className: "traefik"
+  annotations:
+    cert-manager.io/cluster-issuer: "letsencrypt-prod"
+    traefik.ingress.kubernetes.io/router.middlewares: "default-redirect-https@kubernetescrd"
+  hosts:
+    - host: dev.racco.softhill.com.br
+      paths:
+        - path: /
+          pathType: Prefix
+  tls:
+    - secretName: racco-dev-tls
+      hosts:
+        - dev.racco.softhill.com.br
+
+persistence:
+  enabled: true
+  storageClass: "local-path"
+  size: 20Gi
+
+resources:
+  limits:
+    cpu: 2
+    memory: 4Gi
+  requests:
+    cpu: 1
+    memory: 2Gi
+
+autoscaling:
+  enabled: false
+
+podDisruptionBudget:
+  enabled: false
+
+livenessProbe:
+  enabled: true
+  httpGet:
+    path: /web/health
+    port: 8069
+  initialDelaySeconds: 120
+  periodSeconds: 30
+  timeoutSeconds: 10
+  failureThreshold: 3
+
+readinessProbe:
+  enabled: true
+  httpGet:
+    path: /web/health
+    port: 8069
+  initialDelaySeconds: 60
+  periodSeconds: 10
+  timeoutSeconds: 5
+  failureThreshold: 3
+

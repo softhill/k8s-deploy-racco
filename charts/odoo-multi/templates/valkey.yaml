@@ -1,0 +1,113 @@
+{{- if .Values.valkey.enabled }}
+apiVersion: apps/v1
+kind: StatefulSet
+metadata:
+  name: {{ include "odoo.fullname" . }}-valkey
+  labels:
+    {{- include "odoo.labels" . | nindent 4 }}
+    component: valkey
+spec:
+  serviceName: {{ include "odoo.fullname" . }}-valkey
+  replicas: 1
+  selector:
+    matchLabels:
+      {{- include "odoo.selectorLabels" . | nindent 6 }}
+      component: valkey
+  template:
+    metadata:
+      labels:
+        {{- include "odoo.labels" . | nindent 8 }}
+        component: valkey
+    spec:
+      containers:
+      - name: valkey
+        image: valkey/valkey:8.0
+        ports:
+        - containerPort: 6379
+          name: redis
+        command:
+        - valkey-server
+        - /etc/valkey/valkey.conf
+        volumeMounts:
+        - name: valkey-data
+          mountPath: /data
+        - name: valkey-config
+          mountPath: /etc/valkey
+        resources:
+          limits:
+            memory: 512Mi
+            cpu: 500m
+          requests:
+            memory: 256Mi
+            cpu: 100m
+        livenessProbe:
+          exec:
+            command:
+            - sh
+            - -c
+            - 'valkey-cli -a "$(cat /etc/valkey/valkey.conf | grep requirepass | cut -d" " -f2)" -h localhost -p 6379 PING | grep PONG'
+          initialDelaySeconds: 30
+          periodSeconds: 10
+        readinessProbe:
+          exec:
+            command:
+            - sh
+            - -c
+            - 'valkey-cli -a "$(cat /etc/valkey/valkey.conf | grep requirepass | cut -d" " -f2)" -h localhost -p 6379 PING | grep PONG'
+          initialDelaySeconds: 5
+          periodSeconds: 5
+      volumes:
+      - name: valkey-config
+        configMap:
+          name: {{ include "odoo.fullname" . }}-valkey-config
+  volumeClaimTemplates:
+  - metadata:
+      name: valkey-data
+    spec:
+      accessModes: [ "ReadWriteOnce" ]
+      storageClassName: {{ .Values.persistence.storageClass }}
+      resources:
+        requests:
+          storage: {{ .Values.valkey.storage | default "10Gi" }}
+{{- end }}
+
+---
+{{- if .Values.valkey.enabled }}
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: {{ include "odoo.fullname" . }}-valkey-config
+  labels:
+    {{- include "odoo.labels" . | nindent 4 }}
+    component: valkey
+data:
+  valkey.conf: |
+    # Valkey configuration
+    save 900 1
+    save 300 10
+    save 60 10000
+    requirepass {{ .Values.valkey.password | default "" }}
+    maxmemory-policy allkeys-lru
+{{- end }}
+
+---
+{{- if .Values.valkey.enabled }}
+apiVersion: v1
+kind: Service
+metadata:
+  name: {{ include "odoo.fullname" . }}-valkey
+  labels:
+    {{- include "odoo.labels" . | nindent 4 }}
+    component: valkey
+spec:
+  ports:
+  - port: {{ .Values.valkey.port | default 6379 }}
+    targetPort: redis
+    protocol: TCP
+    name: redis
+  selector:
+    {{- include "odoo.selectorLabels" . | nindent 4 }}
+    component: valkey
+  clusterIP: None
+{{- end }}
+

@@ -1,0 +1,67 @@
+{{- if .Values.networkPolicy.enabled }}
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: {{ include "odoo.fullname" . }}
+  labels:
+    {{- include "odoo.labels" . | nindent 4 }}
+spec:
+  podSelector:
+    matchLabels:
+      {{- include "odoo.selectorLabels" . | nindent 6 }}
+  policyTypes:
+    - Ingress
+    - Egress
+  ingress:
+    # Permitir tráfego do Ingress Controller
+    # Suporta tanto nginx quanto Traefik (k3s)
+    - from:
+        - namespaceSelector:
+            matchLabels:
+              name: kube-system  # Traefik no k3s
+        - namespaceSelector:
+            matchLabels:
+              name: ingress-nginx  # Nginx Ingress
+      ports:
+        - protocol: TCP
+          port: {{ .Values.service.port }}
+        - protocol: TCP
+          port: {{ .Values.service.longpollingPort }}
+    # Permitir health checks internos
+    - from:
+        - podSelector:
+            matchLabels:
+              k8s-app: kube-proxy
+      ports:
+        - protocol: TCP
+          port: {{ .Values.service.port }}
+  egress:
+    # Permitir saída para DNS (CoreDNS no kube-system)
+    - to:
+        - namespaceSelector:
+            matchLabels:
+              name: kube-system
+      ports:
+        - protocol: UDP
+          port: 53
+    # Permitir saída para PostgreSQL no namespace específico
+    - to:
+        - namespaceSelector:
+            matchLabels:
+              name: postgresql
+      ports:
+        - protocol: TCP
+          port: {{ .Values.db.port }}
+    # Permitir saída para Redis/Valkey no mesmo namespace
+    - ports:
+        - protocol: TCP
+          port: {{ .Values.redis.port }}
+    # Permitir download de imagens e outros recursos externos
+    - to: []
+      ports:
+        - protocol: TCP
+          port: 443
+        - protocol: TCP
+          port: 80
+{{- end }}
+
